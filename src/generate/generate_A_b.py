@@ -102,6 +102,7 @@ def get_params():
         help="Directory to load the preprocessed data from.",
     )
     parser.add_argument("--secret_path", default="", help="Path to predefined secret.npy file.")
+    parser.add_argument("--orig_A_path", required=True, help="Path to tiny_A.npy file.")
 
     # LWE
     parser.add_argument("--num_secret_seeds", type=int, default=10)
@@ -453,25 +454,24 @@ def plot(reduced_A, orig_A):
     reduced_std = centered(reduced_A, params.Q).std()
 
     y = centered(reduced_A, params.Q).std(0)
-    ax.plot(x, y, label="Reduced")
+    y = np.sqrt(12) * y / params.Q
+    ax.plot(x, y, label=r"Reduced $\mathbf{A}$")
 
     # Original data
     orig_std = centered(orig_A, params.Q).std()
 
     y = centered(orig_A, params.Q).std(0)
-    ax.plot(x, y, label="Original")
+    y = np.sqrt(12) * y / params.Q
+    ax.plot(x, y, label=r"Original $\mathbf{A}$")
 
     ax.set_ylim(ymin=0)
-    ax.set_xlabel("A[i]")
-    ax.set_ylabel("Std. Dev.")
+    ax.set_xlabel(r"Column index of $\mathbf{A}$")
+    ax.set_ylabel(r"$\sqrt{12} \cdot \sigma$ of $\mathbf{A}$ columns $/$ $q$")
     ax.set_title(
         f"{os.path.basename(params.processed_dump_path)} (Reduction {human(reduced_std)}/{human(orig_std)} = {reduced_std/orig_std:.2f})"
     )
     ax.legend()
 
-    fig.savefig(
-        f"{params.dump_path}/R_A_{params.N}_{params.logq}_omega{params.omega}.pdf"
-    )
     fig.savefig(
         f"{params.dump_path}/R_A_{params.N}_{params.logq}_omega{params.omega}.png"
     )
@@ -674,11 +674,6 @@ if __name__ == "__main__":
     else:
         params.m = loaded_params["m"]
 
-    if "reload_data" in loaded_params:
-        params.orig_A_path = loaded_params["reload_data"]
-    else:
-        params.orig_A_path = loaded_params["orig_A_path"]
-
 
     if "secrets" in params.actions:
         with open(os.path.join(params.secret_dir, "params.pkl"), "wb") as fd:
@@ -690,8 +685,8 @@ if __name__ == "__main__":
 
     # Check if these file exists
     # Reduced data
-    reduced_A = np.load(f"{params.dump_path}/train_A.npy")  # Changed from reduced_A.npy
-    orig_A = np.load(f"{params.dump_path}/orig_A.npy")
+    reduced_A = np.load(f"{params.dump_path}/train_A.npy", mmap_mode='r')
+    orig_A = np.load(f"{params.dump_path}/orig_A.npy", mmap_mode='r')
 
     if "plot" in params.actions:
         plot(reduced_A, orig_A)
