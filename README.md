@@ -18,11 +18,25 @@ Install flatter by following the instructions on [Flatter Github](https://github
 You will need 2 different conda environments to use this repo: one without sage (for SALSA, CC, and uSVP attacks) and one with sage (for the MiTM attack)
 
 ### For non-sage conda environment:
-Install a conda environment with the command:
+The provided [`environment/environment.yml`](environment/environment.yml) installs the main attack environment with Python 3.10 and PyTorch 2.7.0 built against CUDA 12.8 (`cu128`). This setup was validated on an NVIDIA GeForce RTX 5070 Ti.
+
+If you already have an older `lattice_env`, remove it first:
+```
+conda env remove -n lattice_env -y
+```
+
+Then create and activate the environment:
 ```
 conda env create -f environment/environment.yml
 conda activate lattice_env
 ```
+
+To verify that PyTorch sees your GPU, run:
+```
+python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no-gpu')"
+```
+
+You should see `2.7.0+cu128`, CUDA `12.8`, and your GPU name if the installation succeeded.
 
 ### For sage conda environment (MiTM only):
 First, make sure you are using the conda-forge channel and set it as top priority:
