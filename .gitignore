@@ -142,3 +142,9 @@ xp/
 numnum.code-workspace
 
 core.*
+# Large data files
+testn80/**/*.npy
+testn80/**/*.pkl
+data/benchmark_paper_data/n80_logq7/*.tar.gz
+data/benchmark_paper_data/n80_logq7/*.prefix
+testn80_salsa_logs/
