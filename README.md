@@ -38,6 +38,16 @@ python -c "import torch; print(torch.__version__); print(torch.version.cuda); pr
 
 You should see `2.7.0+cu128`, CUDA `12.8`, and your GPU name if the installation succeeded.
 
+### Data Generation Setup
+For the detailed data-generation guide, including:
+
+- local `flatter` build in `lattice_env`
+- `orig_A` generation
+- toy setup for `n=10`, `q=61`
+- preprocessing and `(A, b)` generation
+
+see [`src/generate/README.md`](src/generate/README.md).
+
 ### For sage conda environment (MiTM only):
 First, make sure you are using the conda-forge channel and set it as top priority:
 ```
@@ -55,6 +65,9 @@ pip install tqdm joblib
 ```
 
 ## Quickstart
+
+### Tested local toy setup: `n=10`, `q=61`
+The detailed toy walkthrough now lives in [`src/generate/README.md`](src/generate/README.md).
 
 ### Using provided data for SALSA and CC attacks 
 
@@ -87,6 +100,10 @@ If you want to preprocess and generate your own data for the SALSA attack, run t
 
 (Note: you will want to let this run for a while, until you have at least ~2 million samples in the data*.prefix files for SALSA attack)
 (Note: this will take a long time for n > 80, we recommend using our provided datasets if you aren't looking to innovate preprocessing)
+
+For the local `n=10`, `q=61` toy LWE walkthrough in [`src/generate/README.md`](src/generate/README.md), practical stopping rules are:
+- CC-sized toy run: `--max_prefix_lines 250000` (about `560K` reduced samples)
+- SALSA-sized toy run: `--max_prefix_lines 900000` (about `2.0M` reduced samples)
 
 If you want to generate your own secrets, run:
 `python3 src/generate/generate_A_b.py --processed_dump_path /path/used/to/store/preprocessed/data/ --dump_path ./testn80 --N 80 --rlwe 1 --min_hamming 5 --max_hamming 6 --secret_type binary --num_secret_seeds 10 --actions secrets` 

@@ -8,6 +8,8 @@ LICENSE file in the root directory of this source tree.
 
 import io
 import os
+import shutil
+import fcntl
 import numpy as np
 from time import time
 from glob import glob
@@ -25,6 +27,9 @@ FLOAT_UPGRADE = {
     "qd": "mpfr_250",
 }
 MAX_TIME_BKZ = 60
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+LOCAL_FLATTER_BIN = os.path.join(REPO_ROOT, "vendor", "flatter", "install", "bin", "flatter")
+LOCAL_FLATTER_LIB = os.path.join(REPO_ROOT, "vendor", "flatter", "install", "lib")
 
 
 class Generator(object):
@@ -55,6 +60,11 @@ class Generator(object):
         self.export_path_prefix = os.path.join(
             params.dump_path, f"data_{thread}.prefix"
         )
+        self.progress_path = os.path.join(params.dump_path, "prefix_progress.txt")
+        self.max_prefix_lines = getattr(params, "max_prefix_lines", 0)
+        self.max_prefix_blocks = getattr(params, "max_prefix_blocks", 0)
+        self.stop_requested = False
+        self._ensure_progress_file()
 
         self.prev_std = 10000  # Condition to only save off matrix if things improve.
 
@@ -77,6 +87,92 @@ class Generator(object):
             self.logger.info(f"Resuming from {self.resume_filename}.")
         self.logger.info(f"Random generator seed: {self.seed}.")
 
+    def _has_prefix_target(self):
+        return (self.max_prefix_lines > 0) or (self.max_prefix_blocks > 0)
+
+    def _existing_prefix_progress(self):
+        total_lines = 0
+        for path in glob(os.path.join(self.params.dump_path, "data_*.prefix")):
+            with open(path, encoding="utf-8") as fd:
+                total_lines += sum(1 for _ in fd)
+        total_blocks = total_lines // self.m if self.m > 0 else 0
+        return total_lines, total_blocks
+
+    def _ensure_progress_file(self):
+        if not self._has_prefix_target():
+            return
+
+        fd = os.open(self.progress_path, os.O_RDWR | os.O_CREAT, 0o644)
+        with os.fdopen(fd, "r+", encoding="utf-8") as progress_fd:
+            fcntl.flock(progress_fd, fcntl.LOCK_EX)
+            contents = progress_fd.read().strip()
+            if contents:
+                fcntl.flock(progress_fd, fcntl.LOCK_UN)
+                return
+
+            existing_lines, existing_blocks = self._existing_prefix_progress()
+            progress_fd.seek(0)
+            progress_fd.truncate()
+            progress_fd.write(f"{existing_lines} {existing_blocks}\n")
+            progress_fd.flush()
+            os.fsync(progress_fd.fileno())
+            fcntl.flock(progress_fd, fcntl.LOCK_UN)
+
+    def _read_progress(self):
+        if not self._has_prefix_target():
+            return 0, 0
+
+        with open(self.progress_path, "r", encoding="utf-8") as progress_fd:
+            fcntl.flock(progress_fd, fcntl.LOCK_SH)
+            contents = progress_fd.read().strip()
+            fcntl.flock(progress_fd, fcntl.LOCK_UN)
+
+        if not contents:
+            return 0, 0
+
+        line_count, block_count = contents.split()
+        return int(line_count), int(block_count)
+
+    def prefix_target_reached(self):
+        if not self._has_prefix_target():
+            return False
+
+        line_count, block_count = self._read_progress()
+        return (
+            (self.max_prefix_lines > 0 and line_count >= self.max_prefix_lines)
+            or (self.max_prefix_blocks > 0 and block_count >= self.max_prefix_blocks)
+        )
+
+    def _record_prefix_write(self, lines_added):
+        if not self._has_prefix_target():
+            return False
+
+        blocks_added = 1 if lines_added == self.m else 0
+        with open(self.progress_path, "r+", encoding="utf-8") as progress_fd:
+            fcntl.flock(progress_fd, fcntl.LOCK_EX)
+            contents = progress_fd.read().strip()
+            line_count, block_count = (0, 0) if not contents else map(int, contents.split())
+            line_count += lines_added
+            block_count += blocks_added
+            progress_fd.seek(0)
+            progress_fd.truncate()
+            progress_fd.write(f"{line_count} {block_count}\n")
+            progress_fd.flush()
+            os.fsync(progress_fd.fileno())
+            fcntl.flock(progress_fd, fcntl.LOCK_UN)
+
+        reached = (
+            (self.max_prefix_lines > 0 and line_count >= self.max_prefix_lines)
+            or (self.max_prefix_blocks > 0 and block_count >= self.max_prefix_blocks)
+        )
+        if reached:
+            self.logger.info(
+                "Reached prefix target after write. [lines: %s, blocks: %s]",
+                line_count,
+                block_count,
+            )
+        return reached
+
     def set_float_type(self, float_type):
         self.float_type = float_type
         parsed_float_type = float_type.split("_")
@@ -95,6 +191,10 @@ class Generator(object):
             prefix2_str = " ".join(Y[i].astype(str))
             file_handler_prefix.write(f"{prefix1_str} ; {prefix2_str}\n")
         file_handler_prefix.flush()
+        file_handler_prefix.close()
+
+        if self._record_prefix_write(X.shape[0]):
+            self.stop_requested = True
 
     def save_mat(self, X, Y):
         mat_to_save = np.zeros((len(Y), len(Y) + self.m)).astype(int)
@@ -135,10 +235,25 @@ class Generator(object):
         self.logger.info(f"Worker {self.thread} starting new flatter run.")
         fplll_Ap = IntegerMatrix.from_matrix(Ap.tolist())
         fplll_Ap_encoded = encode_intmat(fplll_Ap)
+        flatter_bin = os.environ.get("FLATTER_BIN", LOCAL_FLATTER_BIN)
+        if not os.path.isfile(flatter_bin):
+            flatter_bin = shutil.which("flatter")
+        if flatter_bin is None:
+            raise FileNotFoundError(
+                "Could not find flatter. Set FLATTER_BIN or install it in vendor/flatter/install/bin."
+            )
         try:
             env = {**os.environ, "OMP_NUM_THREADS": "1"}
+            ld_library_path = env.get("LD_LIBRARY_PATH", "")
+            lib_dirs = [LOCAL_FLATTER_LIB]
+            conda_prefix = env.get("CONDA_PREFIX")
+            if conda_prefix:
+                lib_dirs.append(os.path.join(conda_prefix, "lib"))
+            env["LD_LIBRARY_PATH"] = ":".join(
+                [path for path in lib_dirs + [ld_library_path] if path]
+            )
             p = Popen(
-                ["/private/home/ewenger/usr/bin/flatter", "-alpha", str(self.alpha)], stdin=PIPE, stdout=PIPE, env=env
+                [flatter_bin, "-alpha", str(self.alpha)], stdin=PIPE, stdout=PIPE, env=env
             )
         except Exception as e:
             self.logger.info(f"flatter failed with error {e}")
@@ -217,6 +332,9 @@ class Generator(object):
             X = UT[:1].T
             R = (Ap[:, : self.m] / self.params.lll_penalty).astype(int)
             self.write(X, R.T)  # R.T: (m, m+N)
+            if self.stop_requested:
+                self.logger.info("Stopping worker %s after reaching prefix target.", self.thread)
+                return False
             if newstddev < self.params.threshold:  # terminate when reaching threshold
                 self.logger.info(f"Starting new matrix at {self.matrix_filename}")
                 return False  # You've reached the threshold, stop!
@@ -273,6 +391,12 @@ class InterleavedReduction(Generator):
         algo = self.params.algo if self.a1 else self.params.algo2
         algo2 = self.params.algo if not self.a1 else self.params.algo2
         newstddev = self.compute_stdev(Ap, UT, use_polish=True, save=True, algo=algo)
+        if self.prefix_target_reached():
+            self.logger.info(
+                "Stopping worker %s because the global prefix target has already been reached.",
+                self.thread,
+            )
+            return Ap, False
         check = self.check_for_param_upgrade(Ap, UT, newstddev)
         if (
             self.num_times_run >= self.lookback
@@ -296,8 +420,20 @@ class InterleavedReduction(Generator):
         self.a1 = True
         self.a2 = False
         while True:
+            if self.prefix_target_reached():
+                self.logger.info(
+                    "Stopping worker %s before another reduction step because the global prefix target has been reached.",
+                    self.thread,
+                )
+                return Ap, False
             # First do algo1.
             while self.a1:
+                if self.prefix_target_reached():
+                    self.logger.info(
+                        "Stopping worker %s during phase 1 because the global prefix target has been reached.",
+                        self.thread,
+                    )
+                    return Ap, False
                 self.num_times_run += 1
                 try:
                     Ap = self.algo1(Ap)
@@ -313,6 +449,12 @@ class InterleavedReduction(Generator):
 
             # Then flip to algo2.
             while self.a2:
+                if self.prefix_target_reached():
+                    self.logger.info(
+                        "Stopping worker %s during phase 2 because the global prefix target has been reached.",
+                        self.thread,
+                    )
+                    return Ap, False
                 self.num_times_run += 1
                 try:
                     Ap = self.algo2(Ap)
@@ -327,6 +469,10 @@ class InterleavedReduction(Generator):
                     return Ap, check
 
     def generate(self):
+        if self.prefix_target_reached():
+            self.logger.info("Prefix target already reached before starting worker %s.", self.thread)
+            return False
+
         if os.path.isfile(self.matrix_filename):
             A_Ap = np.load(self.matrix_filename)
             UT, Ap = A_Ap[:, : self.m], A_Ap[:, self.m :]
@@ -354,6 +500,9 @@ class InterleavedReduction(Generator):
             Ap, param_change = self.run(UT, Ap)
             if param_change == -1:
                 return False  # Worker encountered error, end now.
+
+        if self.stop_requested:
+            return False
 
         # Rewrite checkpoint with new data and return the bkz reduced result
         newA, newAp = self.get_A_Ap()

@@ -121,6 +121,18 @@ def get_parser():
         default="0.4,0.41,0.5",
         help="thresholds to terminate reduction, start writing data, and switch to phase 2",
     )
+    parser.add_argument(
+        "--max_prefix_lines",
+        type=int,
+        default=0,
+        help="Stop once the total number of lines across data_*.prefix files reaches this value. 0 means unlimited.",
+    )
+    parser.add_argument(
+        "--max_prefix_blocks",
+        type=int,
+        default=0,
+        help="Stop once the total number of logical prefix blocks reaches this value. One block is usually m lines. 0 means unlimited.",
+    )
 
     # Interleave methods
     parser.add_argument(
@@ -191,7 +203,7 @@ def get_data_one_worker(i, params):
     logger = create_this_logger(params)
     sampleGen = InterleavedReduction(params, i, logger)
     gen_more = True
-    while gen_more:
+    while gen_more and not sampleGen.prefix_target_reached():
         gen_more = sampleGen.generate()
 
 
