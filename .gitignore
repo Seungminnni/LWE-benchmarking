@@ -152,3 +152,6 @@ core.*
 # Flatter build artifacts
 vendor/
 
+
+# Vendored dependencies
+vendor/
