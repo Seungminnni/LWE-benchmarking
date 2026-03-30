@@ -149,3 +149,6 @@ core.*
 *.prefix
 *.pth
 
+# Flatter build artifacts
+vendor/
+
