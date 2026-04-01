@@ -62,6 +62,15 @@ def get_parser():
         default=0,
         help="Seed for reproducible generation.",
     )
+    parser.add_argument(
+        "--bit_generator",
+        choices=["pcg64dxsm", "pcg64", "philox", "mt19937"],
+        default="pcg64dxsm",
+        help=(
+            "Explicit NumPy bit generator for orig_A. "
+            "Defaults to PCG64DXSM to avoid ambiguity about RNG provenance."
+        ),
+    )
     # 행렬 원소의 값 범위 표현 방식
     # mod_q: [0, Q) 범위
     # centered: 중심화된 범위 (음수 포함)
@@ -86,6 +95,18 @@ def get_parser():
         help="Full path for the generated .npy file.",
     )
     return parser
+
+
+def make_rng(seed, bit_generator):
+    """Return an explicit NumPy Generator for reproducible, exact-uniform sampling."""
+    seed_sequence = np.random.SeedSequence(seed)
+    bit_generators = {
+        "pcg64dxsm": np.random.PCG64DXSM,
+        "pcg64": np.random.PCG64,
+        "philox": np.random.Philox,
+        "mt19937": np.random.MT19937,
+    }
+    return np.random.Generator(bit_generators[bit_generator](seed_sequence))
 
 
 def get_output_path(args):
@@ -138,6 +159,8 @@ def sample_orig_a(num_rows, n, q, representation, rng):
         - "mod_q"는 전통적인 LWE 정의에 따름
         - "centered"는 일부 암호화 구현에서 흔하게 사용됨
           (센트럼 근처에 값들이 분포하므로 분석에 유리)
+        - 둘 다 rng.integers()를 사용하므로 modulo reduction 없이
+          정확한 discrete uniform 분포를 샘플링합니다.
     """
     if representation == "mod_q":
         # [0, q) 범위에서 균일 분포로 샘플링
@@ -197,7 +220,7 @@ def main(args):
 
     # === 난수 생성기 초기화 ===
     # seed를 설정하면 같은 파라미터로 재실행했을 때 동일한 행렬 생성 가능
-    rng = np.random.default_rng(args.seed)
+    rng = make_rng(args.seed, args.bit_generator)
     
     # === LWE 행렬 생성 ===
     orig_a = sample_orig_a(
@@ -211,6 +234,7 @@ def main(args):
     print(f"Saved orig_A to {output_path}")
     print(f"shape={orig_a.shape} dtype={orig_a.dtype}")
     print(f"min={orig_a.min()} max={orig_a.max()}")
+    print(f"bit_generator={args.bit_generator} seed={args.seed}")
     print(
         "Use this file with "
         f"--reload_data {output_path} and --orig_A_path {output_path}"

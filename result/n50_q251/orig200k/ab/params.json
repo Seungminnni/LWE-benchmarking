@@ -1,0 +1,12 @@
+{
+  "N": 50,
+  "Q": 251,
+  "sigma": 3,
+  "gamma": 2,
+  "secret_type": "binary",
+  "min_hamming": 3,
+  "max_hamming": 3,
+  "num_secret_seeds": 5,
+  "seed": 42,
+  "command": "orig-only 200k synthetic generation"
+}

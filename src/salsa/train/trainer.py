@@ -144,6 +144,7 @@ class Trainer(object):
 
         data = {
             "epoch": self.epoch,
+            "step": self.step,
             "params": {k: v for k, v in self.params.__dict__.items()},
         }
 
@@ -186,8 +187,13 @@ class Trainer(object):
             self.scaler.load_state_dict(data["scaler"])
 
         self.epoch = data["epoch"]
+        self.step = data.get("step", 0)
 
-        logger.warning(f"Checkpoint reloaded. Resuming at epoch {self.epoch} ...")
+        logger.warning(
+            "Checkpoint reloaded. Resuming at epoch %d, step %d ...",
+            self.epoch,
+            self.step,
+        )
 
     def train(self):
         """
@@ -229,6 +235,13 @@ class Trainer(object):
         self.should_stop_training = self.eval(self.step, end_epoch=True)
         self.save_checkpoint()
         self.epoch += 1
+        if self.params.epochs > 0 and self.epoch >= self.params.epochs:
+            logger.info(
+                "Reached epoch limit. [epoch: %d, max_epochs: %d]",
+                self.epoch,
+                self.params.epochs,
+            )
+            self.should_stop_training = True
 
     def eval(self, step, end_epoch=False):
         """

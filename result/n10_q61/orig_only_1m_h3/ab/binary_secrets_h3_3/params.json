@@ -1,0 +1,1 @@
+{"N": 10, "Q": 61, "sigma": 3.0, "gamma": 10, "secret_type": "binary", "min_hamming": 3, "max_hamming": 3, "num_secret_seeds": 5, "seed": 42, "m": -1, "rlwe": 0}
